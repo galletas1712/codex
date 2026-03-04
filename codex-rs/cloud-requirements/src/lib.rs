@@ -540,6 +540,11 @@ pub fn cloud_requirements_loader(
     chatgpt_base_url: String,
     codex_home: PathBuf,
 ) -> CloudRequirementsLoader {
+    // Default to local requirements only unless explicitly opted in.
+    if std::env::var_os("CODEX_ENABLE_CLOUD_REQUIREMENTS").is_none() {
+        return CloudRequirementsLoader::default();
+    }
+
     let service = CloudRequirementsService::new(
         auth_manager,
         Arc::new(BackendRequirementsFetcher::new(chatgpt_base_url)),
