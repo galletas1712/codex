@@ -7,6 +7,7 @@ use crate::features::Feature;
 use crate::features::Features;
 use crate::mcp_connection_manager::ToolInfo;
 use crate::models_manager::collaboration_mode_presets::CollaborationModesConfig;
+use crate::tools::code_mode::PUBLIC_TOOL_NAME;
 use crate::tools::handlers::PLAN_TOOL;
 use crate::tools::handlers::SEARCH_TOOL_BM25_DEFAULT_LIMIT;
 use crate::tools::handlers::SEARCH_TOOL_BM25_TOOL_NAME;
@@ -40,6 +41,40 @@ use std::collections::HashMap;
 const SEARCH_TOOL_BM25_DESCRIPTION_TEMPLATE: &str =
     include_str!("../../templates/search_tool/tool_description.md");
 const WEB_SEARCH_CONTENT_TYPES: [&str; 2] = ["text", "image"];
+
+fn unified_exec_output_schema() -> JsonValue {
+    json!({
+        "type": "object",
+        "properties": {
+            "chunk_id": {
+                "type": "string",
+                "description": "Chunk identifier included when the response reports one."
+            },
+            "wall_time_seconds": {
+                "type": "number",
+                "description": "Elapsed wall time spent waiting for output in seconds."
+            },
+            "exit_code": {
+                "type": "number",
+                "description": "Process exit code when the command finished during this call."
+            },
+            "session_id": {
+                "type": "string",
+                "description": "Session identifier to pass to write_stdin when the process is still running."
+            },
+            "original_token_count": {
+                "type": "number",
+                "description": "Approximate token count before output truncation."
+            },
+            "output": {
+                "type": "string",
+                "description": "Command output text, possibly truncated."
+            }
+        },
+        "required": ["wall_time_seconds", "output"],
+        "additionalProperties": false
+    })
+}
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ShellCommandBackendConfig {
     Classic,
@@ -479,6 +514,7 @@ fn create_exec_command_tool(allow_login_shell: bool, request_permission_enabled:
             required: Some(vec!["cmd".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: Some(unified_exec_output_schema()),
     })
 }
 
@@ -526,6 +562,7 @@ fn create_write_stdin_tool() -> ToolSpec {
             required: Some(vec!["session_id".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: Some(unified_exec_output_schema()),
     })
 }
 
@@ -579,6 +616,7 @@ Examples of valid command strings:
             required: Some(vec!["command".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -646,6 +684,7 @@ Examples of valid command strings:
             required: Some(vec!["command".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -668,6 +707,7 @@ fn create_view_image_tool() -> ToolSpec {
             required: Some(vec!["path".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -752,6 +792,24 @@ fn create_spawn_agent_tool(config: &ToolsConfig) -> ToolSpec {
                 ),
             },
         ),
+        (
+            "model".to_string(),
+            JsonSchema::String {
+                description: Some(
+                    "Optional model override for the new agent. Replaces the inherited model."
+                        .to_string(),
+                ),
+            },
+        ),
+        (
+            "reasoning_effort".to_string(),
+            JsonSchema::String {
+                description: Some(
+                    "Optional reasoning effort override for the new agent. Replaces the inherited reasoning effort."
+                        .to_string(),
+                ),
+            },
+        ),
     ]);
 
     ToolSpec::Function(ResponsesApiTool {
@@ -793,6 +851,7 @@ fn create_spawn_agent_tool(config: &ToolsConfig) -> ToolSpec {
             required: None,
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -869,6 +928,7 @@ fn create_spawn_agents_on_csv_tool() -> ToolSpec {
             required: Some(vec!["csv_path".to_string(), "instruction".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -918,6 +978,7 @@ fn create_report_agent_job_result_tool() -> ToolSpec {
             ]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -960,6 +1021,7 @@ fn create_send_input_tool() -> ToolSpec {
             required: Some(vec!["id".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -983,6 +1045,7 @@ fn create_resume_agent_tool() -> ToolSpec {
             required: Some(vec!["id".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -1017,6 +1080,7 @@ fn create_wait_tool() -> ToolSpec {
             required: Some(vec!["ids".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -1102,6 +1166,7 @@ fn create_request_user_input_tool(
             required: Some(vec!["questions".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -1126,6 +1191,7 @@ fn create_request_permissions_tool() -> ToolSpec {
             required: Some(vec!["permissions".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -1140,14 +1206,14 @@ fn create_close_agent_tool() -> ToolSpec {
 
     ToolSpec::Function(ResponsesApiTool {
         name: "close_agent".to_string(),
-        description: "Close an agent when it is no longer needed and return its last known status."
-            .to_string(),
+        description: "Close an agent when it is no longer needed and return its last known status. Don't keep agents open for too long if they are not needed anymore.".to_string(),
         strict: false,
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["id".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -1215,6 +1281,7 @@ fn create_test_sync_tool() -> ToolSpec {
             required: None,
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -1266,6 +1333,7 @@ fn create_grep_files_tool() -> ToolSpec {
             required: Some(vec!["pattern".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -1311,6 +1379,7 @@ fn create_search_tool_bm25_tool(app_tools: &HashMap<String, ToolInfo>) -> ToolSp
             required: Some(vec!["query".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -1414,6 +1483,7 @@ fn create_read_file_tool() -> ToolSpec {
             required: Some(vec!["file_path".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -1460,6 +1530,7 @@ fn create_list_dir_tool() -> ToolSpec {
             required: Some(vec!["dir_path".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -1534,6 +1605,7 @@ fn create_js_repl_reset_tool() -> ToolSpec {
             required: None,
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -1549,11 +1621,11 @@ source: /[\s\S]+/
         enabled_tool_names.join(", ")
     };
     let description = format!(
-        "Runs JavaScript in a Node-backed `node:vm` context. This is a freeform tool: send raw JavaScript source text (no JSON/quotes/markdown fences). Direct tool calls remain available while `code_mode` is enabled. Inside JavaScript, import nested tools from `tools.js`, for example `import {{ exec_command }} from \"tools.js\"` or `import {{ tools }} from \"tools.js\"`. `tools[name]` and identifier wrappers like `await shell(args)` remain available for compatibility when the tool name is a valid JS identifier. Nested tool calls resolve to arrays of content items. Function tools require JSON object arguments. Freeform tools require raw strings. Use synchronous `add_content(value)` with a content item or content-item array, including `add_content(await exec_command(...))`, to return the same content items a direct tool call would expose to the model. Only content passed to `add_content(value)` is surfaced back to the model. Enabled nested tools: {enabled_list}."
+        "Runs JavaScript in a Node-backed `node:vm` context. This is a freeform tool: send raw JavaScript source text (no JSON/quotes/markdown fences). Direct tool calls remain available while `{PUBLIC_TOOL_NAME}` is enabled. Inside JavaScript, import nested tools from `tools.js`, for example `import {{ exec_command }} from \"tools.js\"` or `import {{ tools }} from \"tools.js\"`. Namespaced tools are also available from `tools/<namespace...>.js`; MCP tools use `tools/mcp/<server>.js`, for example `import {{ append_notebook_logs_chart }} from \"tools/mcp/ologs.js\"`. `tools[name]` and identifier wrappers like `await shell(args)` remain available for compatibility when the tool name is a valid JS identifier. Nested tool calls resolve to their code-mode result values. Import `{{ output_text, output_image, set_max_output_tokens_per_exec_call, store, load }}` from `\"@openai/code_mode\"` (or `\"openai/code_mode\"`); `output_text(value)` surfaces text back to the model and stringifies non-string objects when possible, `output_image(imageUrl)` appends an `input_image` content item for `http(s)` or `data:` URLs, `store(key, value)` persists JSON-serializable values across `{PUBLIC_TOOL_NAME}` calls in the current session, `load(key)` returns a cloned stored value or `undefined`, and `set_max_output_tokens_per_exec_call(value)` sets the token budget used to truncate the final Rust-side result of the current `{PUBLIC_TOOL_NAME}` execution. The default is `10000`. This guards the overall `{PUBLIC_TOOL_NAME}` output, not individual nested tool invocations. When truncation happens, the final text uses the unified-exec style `Original token count:` / `Output:` wrapper and the usual `…N tokens truncated…` marker. Function tools require JSON object arguments. Freeform tools require raw strings. `add_content(value)` remains available for compatibility with a content item, content-item array, or string. Structured nested-tool results should be converted to text first, for example with `JSON.stringify(...)`. Only content passed to `output_text(...)`, `output_image(...)`, or `add_content(value)` is surfaced back to the model. Enabled nested tools: {enabled_list}."
     );
 
     ToolSpec::Freeform(FreeformTool {
-        name: "code_mode".to_string(),
+        name: PUBLIC_TOOL_NAME.to_string(),
         description,
         format: FreeformToolFormat {
             r#type: "grammar".to_string(),
@@ -1594,6 +1666,7 @@ fn create_list_mcp_resources_tool() -> ToolSpec {
             required: None,
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -1628,6 +1701,7 @@ fn create_list_mcp_resource_templates_tool() -> ToolSpec {
             required: None,
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -1664,6 +1738,7 @@ fn create_read_mcp_resource_tool() -> ToolSpec {
             required: Some(vec!["server".to_string(), "uri".to_string()]),
             additional_properties: Some(false.into()),
         },
+        output_schema: None,
     })
 }
 
@@ -1696,6 +1771,7 @@ pub(crate) fn mcp_tool_to_openai_tool(
     let rmcp::model::Tool {
         description,
         input_schema,
+        output_schema,
         ..
     } = tool;
 
@@ -1720,12 +1796,19 @@ pub(crate) fn mcp_tool_to_openai_tool(
     // `type`, so we coerce/sanitize here for compatibility.
     sanitize_json_schema(&mut serialized_input_schema);
     let input_schema = serde_json::from_value::<JsonSchema>(serialized_input_schema)?;
+    let structured_content_schema = output_schema
+        .map(|output_schema| serde_json::Value::Object(output_schema.as_ref().clone()))
+        .unwrap_or_else(|| JsonValue::Object(serde_json::Map::new()));
+    let output_schema = Some(mcp_call_tool_result_output_schema(
+        structured_content_schema,
+    ));
 
     Ok(ResponsesApiTool {
         name: fully_qualified_name,
         description: description.map(Into::into).unwrap_or_default(),
         strict: false,
         parameters: input_schema,
+        output_schema,
     })
 }
 
@@ -1739,6 +1822,7 @@ fn dynamic_tool_to_openai_tool(
         description: tool.description.clone(),
         strict: false,
         parameters: input_schema,
+        output_schema: None,
     })
 }
 
@@ -1747,6 +1831,25 @@ pub fn parse_tool_input_schema(input_schema: &JsonValue) -> Result<JsonSchema, s
     let mut input_schema = input_schema.clone();
     sanitize_json_schema(&mut input_schema);
     serde_json::from_value::<JsonSchema>(input_schema)
+}
+
+fn mcp_call_tool_result_output_schema(structured_content_schema: JsonValue) -> JsonValue {
+    json!({
+        "type": "object",
+        "properties": {
+            "content": {
+                "type": "array",
+                "items": {}
+            },
+            "structuredContent": structured_content_schema,
+            "isError": {
+                "type": "boolean"
+            },
+            "_meta": {}
+        },
+        "required": ["content"],
+        "additionalProperties": false
+    })
 }
 
 /// Sanitize a JSON Schema (as serde_json::Value) so it can fit our limited
@@ -1924,12 +2027,12 @@ pub(crate) fn build_specs(
         let mut enabled_tool_names = nested_specs
             .into_iter()
             .map(|spec| spec.spec.name().to_string())
-            .filter(|name| name != "code_mode")
+            .filter(|name| name != PUBLIC_TOOL_NAME)
             .collect::<Vec<_>>();
         enabled_tool_names.sort();
         enabled_tool_names.dedup();
         builder.push_spec(create_code_mode_tool(&enabled_tool_names));
-        builder.register_handler("code_mode", code_mode_handler);
+        builder.register_handler(PUBLIC_TOOL_NAME, code_mode_handler);
     }
 
     match &config.shell_type {
@@ -2220,6 +2323,116 @@ mod tests {
         let parameters = serde_json::to_value(openai_tool.parameters).expect("serialize schema");
 
         assert_eq!(parameters.get("properties"), Some(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn mcp_tool_to_openai_tool_preserves_top_level_output_schema() {
+        let mut input_schema = rmcp::model::JsonObject::new();
+        input_schema.insert("type".to_string(), serde_json::json!("object"));
+
+        let mut output_schema = rmcp::model::JsonObject::new();
+        output_schema.insert(
+            "properties".to_string(),
+            serde_json::json!({
+                "result": {
+                    "properties": {
+                        "nested": {}
+                    }
+                }
+            }),
+        );
+        output_schema.insert("required".to_string(), serde_json::json!(["result"]));
+
+        let tool = rmcp::model::Tool {
+            name: "with_output".to_string().into(),
+            title: None,
+            description: Some("Has output schema".to_string().into()),
+            input_schema: std::sync::Arc::new(input_schema),
+            output_schema: Some(std::sync::Arc::new(output_schema)),
+            annotations: None,
+            execution: None,
+            icons: None,
+            meta: None,
+        };
+
+        let openai_tool = mcp_tool_to_openai_tool("mcp__server__with_output".to_string(), tool)
+            .expect("convert tool");
+
+        assert_eq!(
+            openai_tool.output_schema,
+            Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "array",
+                        "items": {}
+                    },
+                    "structuredContent": {
+                        "properties": {
+                            "result": {
+                                "properties": {
+                                    "nested": {}
+                                }
+                            }
+                        },
+                        "required": ["result"]
+                    },
+                    "isError": {
+                        "type": "boolean"
+                    },
+                    "_meta": {}
+                },
+                "required": ["content"],
+                "additionalProperties": false
+            }))
+        );
+    }
+
+    #[test]
+    fn mcp_tool_to_openai_tool_preserves_output_schema_without_inferred_type() {
+        let mut input_schema = rmcp::model::JsonObject::new();
+        input_schema.insert("type".to_string(), serde_json::json!("object"));
+
+        let mut output_schema = rmcp::model::JsonObject::new();
+        output_schema.insert("enum".to_string(), serde_json::json!(["ok", "error"]));
+
+        let tool = rmcp::model::Tool {
+            name: "with_enum_output".to_string().into(),
+            title: None,
+            description: Some("Has enum output schema".to_string().into()),
+            input_schema: std::sync::Arc::new(input_schema),
+            output_schema: Some(std::sync::Arc::new(output_schema)),
+            annotations: None,
+            execution: None,
+            icons: None,
+            meta: None,
+        };
+
+        let openai_tool =
+            mcp_tool_to_openai_tool("mcp__server__with_enum_output".to_string(), tool)
+                .expect("convert tool");
+
+        assert_eq!(
+            openai_tool.output_schema,
+            Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "array",
+                        "items": {}
+                    },
+                    "structuredContent": {
+                        "enum": ["ok", "error"]
+                    },
+                    "isError": {
+                        "type": "boolean"
+                    },
+                    "_meta": {}
+                },
+                "required": ["content"],
+                "additionalProperties": false
+            }))
+        );
     }
 
     fn tool_name(tool: &ToolSpec) -> &str {
@@ -3278,6 +3491,7 @@ mod tests {
                 },
                 description: "Do something cool".to_string(),
                 strict: false,
+                output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
             })
         );
     }
@@ -3516,6 +3730,7 @@ mod tests {
                 },
                 description: "Search docs".to_string(),
                 strict: false,
+                output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
             })
         );
     }
@@ -3567,6 +3782,7 @@ mod tests {
                 },
                 description: "Pagination".to_string(),
                 strict: false,
+                output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
             })
         );
     }
@@ -3622,6 +3838,7 @@ mod tests {
                 },
                 description: "Tags".to_string(),
                 strict: false,
+                output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
             })
         );
     }
@@ -3675,6 +3892,7 @@ mod tests {
                 },
                 description: "AnyOf Value".to_string(),
                 strict: false,
+                output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
             })
         );
     }
@@ -3933,6 +4151,7 @@ Examples of valid command strings:
                 },
                 description: "Do something cool".to_string(),
                 strict: false,
+                output_schema: Some(mcp_call_tool_result_output_schema(serde_json::json!({}))),
             })
         );
     }
@@ -3950,6 +4169,7 @@ Examples of valid command strings:
                 required: None,
                 additional_properties: None,
             },
+            output_schema: None,
         })];
 
         let responses_json = create_tools_json_for_responses_api(&tools).unwrap();
