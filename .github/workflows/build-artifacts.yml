@@ -13,8 +13,8 @@ permissions:
   contents: write
 
 env:
-  TIP_TAG: tip
-  TIP_RELEASE_NAME: Tip
+  TIP_TAG_PREFIX: tip-
+  TIP_RELEASE_NAME_PREFIX: Tip
 
 jobs:
   build:
@@ -54,7 +54,8 @@ jobs:
         run: |
           set -euo pipefail
           output_dir="${RUNNER_TEMP}/artifact"
-          artifact_name="codex-tip-linux-x86_64-musl"
+          short_sha="${GITHUB_SHA::12}"
+          artifact_name="codex-tip-${short_sha}-linux-x86_64-musl"
           mkdir -p "${output_dir}"
           stage_dir="${output_dir}/${artifact_name}"
           mkdir -p "${stage_dir}"
@@ -70,8 +71,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: codex-tip-linux-x86_64-musl
-          path: ${{ runner.temp }}/artifact/codex-tip-linux-x86_64-musl.tar.gz
+          name: tip-release-asset
+          path: ${{ runner.temp }}/artifact/*.tar.gz
           retention-days: 30
 
   publish:
@@ -87,43 +88,48 @@ jobs:
       - name: Download release artifact
         uses: actions/download-artifact@v5
         with:
-          name: codex-tip-linux-x86_64-musl
+          name: tip-release-asset
           path: ${{ runner.temp }}/tip-release
 
-      - name: Move tip tag to current commit
+      - name: Create release tag for this commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          git tag -f "${TIP_TAG}" "${GITHUB_SHA}"
-          git push origin "refs/tags/${TIP_TAG}" --force
+          release_tag="${TIP_TAG_PREFIX}${GITHUB_SHA}"
+          git tag -f "${release_tag}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${release_tag}"
 
-      - name: Create or update tip release
+      - name: Create or update release for this commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
 
-          release_notes="Latest dev tip build for ${GITHUB_SHA} (x86_64-unknown-linux-musl)"
-          asset_path="${RUNNER_TEMP}/tip-release/codex-tip-linux-x86_64-musl.tar.gz"
+          release_tag="${TIP_TAG_PREFIX}${GITHUB_SHA}"
+          short_sha="${GITHUB_SHA::12}"
+          release_name="${TIP_RELEASE_NAME_PREFIX} ${short_sha}"
+          release_notes="Dev tip build for ${GITHUB_SHA} (x86_64-unknown-linux-musl)"
+          asset_path="$(find "${RUNNER_TEMP}/tip-release" -type f -name '*.tar.gz' -print -quit)"
 
-          if gh release view "${TIP_TAG}" >/dev/null 2>&1; then
-            mapfile -t existing_assets < <(gh release view "${TIP_TAG}" --json assets --jq '.assets[].name')
-            for existing_asset in "${existing_assets[@]}"; do
-              gh release delete-asset "${TIP_TAG}" "${existing_asset}" --yes
-            done
+          if gh release view tip >/dev/null 2>&1; then
+            gh release delete tip --yes --cleanup-tag
+          elif git ls-remote --exit-code origin refs/tags/tip >/dev/null 2>&1; then
+            git push origin :refs/tags/tip
+          fi
 
-            gh release edit "${TIP_TAG}" \
-              --title "${TIP_RELEASE_NAME}" \
+          if gh release view "${release_tag}" >/dev/null 2>&1; then
+            gh release edit "${release_tag}" \
+              --title "${release_name}" \
               --notes "${release_notes}" \
               --prerelease
           else
-            gh release create "${TIP_TAG}" \
-              --title "${TIP_RELEASE_NAME}" \
+            gh release create "${release_tag}" \
+              --title "${release_name}" \
               --notes "${release_notes}" \
               --prerelease
           fi
 
-          gh release upload "${TIP_TAG}" "${asset_path}" --clobber
+          gh release upload "${release_tag}" "${asset_path}" --clobber

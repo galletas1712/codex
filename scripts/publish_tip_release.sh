@@ -3,8 +3,8 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-release_tag="${TIP_TAG:-tip}"
-release_name="${TIP_RELEASE_NAME:-Tip}"
+release_tag_prefix="${TIP_TAG_PREFIX:-tip-}"
+release_name_prefix="${TIP_RELEASE_NAME_PREFIX:-Tip}"
 
 require_clean_worktree=true
 if [[ "${1:-}" == "--allow-dirty" ]]; then
@@ -50,7 +50,10 @@ if [[ -z "${target}" ]]; then
     exit 1
 fi
 
-asset_name="codex-tip-${target}.tar.gz"
+short_sha="${current_sha:0:12}"
+release_tag="${release_tag_prefix}${current_sha}"
+release_name="${release_name_prefix} ${short_sha}"
+asset_name="codex-tip-${short_sha}-${target}.tar.gz"
 output_dir="$(mktemp -d)"
 trap 'rm -rf "${output_dir}"' EXIT
 
@@ -71,26 +74,16 @@ EOF
 
 tar -C "${output_dir}" -czf "${output_dir}/${asset_name}" "codex-tip-${target}"
 
-existing_tag_sha=""
-if git rev-parse "refs/tags/${release_tag}^{commit}" >/dev/null 2>&1; then
-    existing_tag_sha="$(git rev-parse "refs/tags/${release_tag}^{commit}")"
-fi
-
-if gh release view "${release_tag}" >/dev/null 2>&1; then
-    if [[ -n "${existing_tag_sha}" ]] && [[ "${existing_tag_sha}" != "${current_sha}" ]]; then
-        mapfile -t existing_assets < <(gh release view "${release_tag}" --json assets --jq '.assets[].name')
-        for existing_asset in "${existing_assets[@]}"; do
-            gh release delete-asset "${release_tag}" "${existing_asset}" --yes
-        done
-    fi
-else
-    existing_tag_sha=""
+if gh release view tip >/dev/null 2>&1; then
+    gh release delete tip --yes --cleanup-tag
+elif git ls-remote --exit-code origin refs/tags/tip >/dev/null 2>&1; then
+    git push origin :refs/tags/tip
 fi
 
 git tag -f "${release_tag}" "${current_sha}"
-git push origin "refs/tags/${release_tag}" --force
+git push origin "refs/tags/${release_tag}"
 
-release_notes="Latest dev tip build for ${current_sha} (${target})"
+release_notes="Dev tip build for ${current_sha} (${target})"
 if gh release view "${release_tag}" >/dev/null 2>&1; then
     gh release edit "${release_tag}" \
         --title "${release_name}" \
