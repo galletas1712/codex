@@ -472,6 +472,7 @@ async fn thread_start_surfaces_cloud_requirements_load_errors() -> Result<()> {
         codex_home.path(),
         &[
             ("OPENAI_API_KEY", None),
+            ("CODEX_ENABLE_CLOUD_REQUIREMENTS", Some("1")),
             (
                 REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR,
                 Some(refresh_token_url.as_str()),
