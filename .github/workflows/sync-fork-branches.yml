@@ -1,0 +1,227 @@
+name: sync-fork-branches
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  UPSTREAM_REPO: openai/codex
+  UPSTREAM_BRANCH: main
+  MIRROR_BRANCH: main
+  PATCH_BRANCH: dev
+  SYNC_FAILURE_ISSUE_TITLE: Fork branch sync failed
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.FORK_SYNC_TOKEN != '' && secrets.FORK_SYNC_TOKEN || github.token }}
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@1.93.0
+
+      - name: Sync main and rebase dev
+        id: sync
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          pre_main_sha="$(git rev-parse "origin/${MIRROR_BRANCH}")"
+          pre_patch_sha="$(git rev-parse "origin/${PATCH_BRANCH}")"
+          log_file="${RUNNER_TEMP}/sync-fork-branches.log"
+          echo "log_file=${log_file}" >> "$GITHUB_OUTPUT"
+
+          if ./.github/scripts/sync-fork-branches.sh 2>&1 | tee "${log_file}"; then
+            echo "exit_code=0" >> "$GITHUB_OUTPUT"
+            post_main_sha="$(git rev-parse "${MIRROR_BRANCH}")"
+            post_patch_sha="$(git rev-parse "${PATCH_BRANCH}")"
+
+            main_changed=false
+            if [[ "${pre_main_sha}" != "${post_main_sha}" ]]; then
+              main_changed=true
+            fi
+
+            patch_changed=false
+            if [[ "${pre_patch_sha}" != "${post_patch_sha}" ]]; then
+              patch_changed=true
+            fi
+
+            echo "main_changed=${main_changed}" >> "$GITHUB_OUTPUT"
+            echo "patch_changed=${patch_changed}" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
+            exit "${status}"
+          fi
+
+      - name: Dispatch CI workflows when push fan-out is unavailable
+        if: ${{ always() && steps.sync.outcome == 'success' && secrets.FORK_SYNC_TOKEN == '' && (steps.sync.outputs.main_changed == 'true' || steps.sync.outputs.patch_changed == 'true') }}
+        uses: actions/github-script@v8
+        env:
+          MAIN_CHANGED: ${{ steps.sync.outputs.main_changed }}
+          PATCH_CHANGED: ${{ steps.sync.outputs.patch_changed }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const refs = [];
+            const workflows = [
+              "ci.yml",
+              "cargo-deny.yml",
+              "rust-ci.yml",
+              "bazel.yml",
+              "sdk.yml",
+            ];
+
+            if (process.env.MAIN_CHANGED === "true") {
+              refs.push(process.env.MIRROR_BRANCH);
+            }
+            if (process.env.PATCH_CHANGED === "true") {
+              refs.push(process.env.PATCH_BRANCH);
+            }
+
+            for (const ref of refs) {
+              for (const workflow_id of workflows) {
+                await github.rest.actions.createWorkflowDispatch({
+                  owner,
+                  repo,
+                  workflow_id,
+                  ref,
+                });
+                core.info(`Dispatched ${workflow_id} on ${ref}`);
+              }
+            }
+
+      - name: Open or update failure issue
+        if: ${{ always() && steps.sync.outcome != 'success' }}
+        uses: actions/github-script@v8
+        env:
+          SYNC_LOG_FILE: ${{ steps.sync.outputs.log_file }}
+          SYNC_EXIT_CODE: ${{ steps.sync.outputs.exit_code }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require("fs");
+            const { owner, repo } = context.repo;
+            const title = process.env.SYNC_FAILURE_ISSUE_TITLE;
+            const logPath = process.env.SYNC_LOG_FILE;
+            const exitCode = process.env.SYNC_EXIT_CODE || "unknown";
+            const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
+            const timestamp = new Date().toISOString();
+
+            let logExcerpt = "Log file was not captured.";
+            if (logPath && fs.existsSync(logPath)) {
+              const log = fs.readFileSync(logPath, "utf8");
+              logExcerpt = log.length > 30000 ? log.slice(-30000) : log;
+            }
+
+            const body = [
+              "The scheduled fork sync workflow failed.",
+              "",
+              `- Upstream: \`${process.env.UPSTREAM_REPO}\` / \`${process.env.UPSTREAM_BRANCH}\``,
+              `- Mirror branch: \`${process.env.MIRROR_BRANCH}\``,
+              `- Patch branch: \`${process.env.PATCH_BRANCH}\``,
+              `- Exit code: \`${exitCode}\``,
+              `- Workflow run: ${runUrl}`,
+              `- Updated at: ${timestamp}`,
+              "",
+              "Recent log excerpt:",
+              "```text",
+              logExcerpt,
+              "```",
+            ].join("\n");
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: "open",
+              per_page: 100,
+            });
+
+            const existingIssue = issues.find(
+              (issue) => issue.title === title && !issue.pull_request,
+            );
+
+            if (existingIssue) {
+              await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: existingIssue.number,
+                body,
+              });
+              core.info(`Updated issue #${existingIssue.number}`);
+            } else {
+              const created = await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body,
+              });
+              core.info(`Created issue #${created.data.number}`);
+            }
+
+      - name: Close failure issue after recovery
+        if: ${{ always() && steps.sync.outcome == 'success' }}
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const title = process.env.SYNC_FAILURE_ISSUE_TITLE;
+            const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: "open",
+              per_page: 100,
+            });
+
+            const existingIssue = issues.find(
+              (issue) => issue.title === title && !issue.pull_request,
+            );
+
+            if (!existingIssue) {
+              core.info("No open sync failure issue to close.");
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: existingIssue.number,
+              body: `Fork sync recovered successfully in ${runUrl}. Closing this issue.`,
+            });
+
+            await github.rest.issues.update({
+              owner,
+              repo,
+              issue_number: existingIssue.number,
+              state: "closed",
+            });
+
+            core.info(`Closed issue #${existingIssue.number}`);
+
+      - name: Fail workflow if sync failed
+        if: ${{ always() && steps.sync.outcome != 'success' }}
+        shell: bash
+        run: |
+          echo "sync-fork-branches failed with exit code ${SYNC_EXIT_CODE:-unknown}" >&2
+          exit 1
+        env:
+          SYNC_EXIT_CODE: ${{ steps.sync.outputs.exit_code }}
