@@ -18,6 +18,7 @@ env:
   UPSTREAM_BRANCH: main
   MIRROR_BRANCH: main
   PATCH_BRANCH: dev
+  HAS_FORK_SYNC_TOKEN: ${{ secrets.FORK_SYNC_TOKEN != '' && 'true' || 'false' }}
   SYNC_FAILURE_ISSUE_TITLE: Fork branch sync failed
 
 jobs:
@@ -70,7 +71,7 @@ jobs:
           fi
 
       - name: Dispatch CI workflows when push fan-out is unavailable
-        if: ${{ always() && steps.sync.outcome == 'success' && secrets.FORK_SYNC_TOKEN == '' && (steps.sync.outputs.main_changed == 'true' || steps.sync.outputs.patch_changed == 'true') }}
+        if: ${{ always() && steps.sync.outcome == 'success' && env.HAS_FORK_SYNC_TOKEN != 'true' && (steps.sync.outputs.main_changed == 'true' || steps.sync.outputs.patch_changed == 'true') }}
         uses: actions/github-script@v8
         env:
           MAIN_CHANGED: ${{ steps.sync.outputs.main_changed }}
