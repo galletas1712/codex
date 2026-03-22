@@ -76,6 +76,7 @@ jobs:
               "bazel.yml",
               "sdk.yml",
               "shell-tool-mcp-ci.yml",
+              "build-artifacts.yml",
             ];
 
             if (process.env.PATCH_CHANGED !== "true") {
