@@ -1,12 +1,13 @@
 # Codespell configuration is within .codespellrc
 ---
-name: Codespell
+name: Spell Check
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
+  workflow_dispatch:
 
 permissions:
   contents: read

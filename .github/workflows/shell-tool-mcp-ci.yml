@@ -1,4 +1,4 @@
-name: shell-tool-mcp CI
+name: Shell Tool MCP CI
 
 on:
   push:

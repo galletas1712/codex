@@ -1,4 +1,4 @@
-name: blob-size-policy
+name: Blob Size Policy
 
 on:
   pull_request: {}

@@ -1,0 +1,135 @@
+name: Tip Release
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  TIP_TAG: tip
+  TIP_RELEASE_NAME: Tip
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            artifact_name: codex-tip-linux-x86_64
+          - runner: macos-15-xlarge
+            target: aarch64-apple-darwin
+            artifact_name: codex-tip-macos-aarch64
+          - runner: macos-15-xlarge
+            target: x86_64-apple-darwin
+            artifact_name: codex-tip-macos-x86_64
+
+    defaults:
+      run:
+        working-directory: codex-rs
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Require dev branch
+        if: ${{ github.ref_name != 'dev' }}
+        shell: bash
+        run: |
+          echo "Tip Release only publishes builds from dev. Current ref: ${GITHUB_REF_NAME}" >&2
+          exit 1
+
+      - name: Install Linux build dependencies
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libcap-dev
+
+      - uses: dtolnay/rust-toolchain@1.93.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build codex
+        shell: bash
+        run: cargo build --release --bin codex --target ${{ matrix.target }}
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          output_dir="${RUNNER_TEMP}/artifact/${{ matrix.target }}"
+          mkdir -p "${output_dir}"
+          stage_dir="${output_dir}/${{ matrix.artifact_name }}"
+          mkdir -p "${stage_dir}"
+          cp "target/${{ matrix.target }}/release/codex" "${stage_dir}/codex"
+          cat > "${output_dir}/BUILD_INFO.txt" <<EOF
+          ref=${GITHUB_REF_NAME}
+          sha=${GITHUB_SHA}
+          target=${{ matrix.target }}
+          built_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          EOF
+          mv "${output_dir}/BUILD_INFO.txt" "${stage_dir}/BUILD_INFO.txt"
+          tar -C "${output_dir}" -czf "${output_dir}/${{ matrix.artifact_name }}.tar.gz" "${{ matrix.artifact_name }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ runner.temp }}/artifact/${{ matrix.target }}/${{ matrix.artifact_name }}.tar.gz
+          retention-days: 30
+
+  publish:
+    name: Publish tip release
+    runs-on: ubuntu-24.04
+    needs: build
+    if: ${{ github.ref_name == 'dev' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: ${{ runner.temp }}/tip-release
+
+      - name: Move tip tag to current commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag -f "${TIP_TAG}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${TIP_TAG}" --force
+
+      - name: Create or update tip release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_notes="Latest dev tip build for ${GITHUB_SHA}"
+          assets=("${RUNNER_TEMP}/tip-release"/*/*.tar.gz)
+
+          if gh release view "${TIP_TAG}" >/dev/null 2>&1; then
+            gh release edit "${TIP_TAG}" \
+              --title "${TIP_RELEASE_NAME}" \
+              --notes "${release_notes}" \
+              --prerelease
+          else
+            gh release create "${TIP_TAG}" \
+              --title "${TIP_RELEASE_NAME}" \
+              --notes "${release_notes}" \
+              --prerelease
+          fi
+
+          gh release upload "${TIP_TAG}" "${assets[@]}" --clobber

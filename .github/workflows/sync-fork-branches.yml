@@ -84,6 +84,7 @@ jobs:
             const workflows = [
               "ci.yml",
               "cargo-deny.yml",
+              "codespell.yml",
               "rust-ci.yml",
               "bazel.yml",
               "sdk.yml",
@@ -106,6 +107,16 @@ jobs:
                 });
                 core.info(`Dispatched ${workflow_id} on ${ref}`);
               }
+            }
+
+            if (process.env.PATCH_CHANGED === "true") {
+              await github.rest.actions.createWorkflowDispatch({
+                owner,
+                repo,
+                workflow_id: "build-artifacts.yml",
+                ref: process.env.PATCH_BRANCH,
+              });
+              core.info(`Dispatched build-artifacts.yml on ${process.env.PATCH_BRANCH}`);
             }
 
       - name: Open or update failure issue
