@@ -41,6 +41,20 @@ jobs:
           sudo apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libcap-dev libubsan1
 
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.14.0
+
+      - name: Install musl build tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          TARGET: x86_64-unknown-linux-musl
+          APT_UPDATE_ARGS: -o Acquire::Retries=3
+          APT_INSTALL_ARGS: --no-install-recommends
+        shell: bash
+        run: bash "${GITHUB_WORKSPACE}/.github/scripts/install-musl-build-tools.sh"
+
       - uses: dtolnay/rust-toolchain@1.93.0
         with:
           targets: x86_64-unknown-linux-musl
