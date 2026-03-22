@@ -2,12 +2,14 @@ name: Shell Tool MCP CI
 
 on:
   push:
+    branches: [dev]
     paths:
       - "shell-tool-mcp/**"
       - ".github/workflows/shell-tool-mcp-ci.yml"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
   pull_request:
+    branches: [dev]
     paths:
       - "shell-tool-mcp/**"
       - ".github/workflows/shell-tool-mcp-ci.yml"

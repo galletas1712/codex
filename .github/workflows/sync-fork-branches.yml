@@ -3,7 +3,7 @@ name: Fork Sync
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "17 10 * * *"
 
 concurrency:
   group: ${{ github.workflow }}
@@ -33,36 +33,25 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.FORK_SYNC_TOKEN != '' && secrets.FORK_SYNC_TOKEN || github.token }}
 
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@1.93.0
-
       - name: Sync main and rebase dev
         id: sync
         continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
-          pre_main_sha="$(git rev-parse "origin/${MIRROR_BRANCH}")"
           pre_patch_sha="$(git rev-parse "origin/${PATCH_BRANCH}")"
           log_file="${RUNNER_TEMP}/sync-fork-branches.log"
           echo "log_file=${log_file}" >> "$GITHUB_OUTPUT"
 
           if ./.github/scripts/sync-fork-branches.sh 2>&1 | tee "${log_file}"; then
             echo "exit_code=0" >> "$GITHUB_OUTPUT"
-            post_main_sha="$(git rev-parse "${MIRROR_BRANCH}")"
             post_patch_sha="$(git rev-parse "${PATCH_BRANCH}")"
-
-            main_changed=false
-            if [[ "${pre_main_sha}" != "${post_main_sha}" ]]; then
-              main_changed=true
-            fi
 
             patch_changed=false
             if [[ "${pre_patch_sha}" != "${post_patch_sha}" ]]; then
               patch_changed=true
             fi
 
-            echo "main_changed=${main_changed}" >> "$GITHUB_OUTPUT"
             echo "patch_changed=${patch_changed}" >> "$GITHUB_OUTPUT"
           else
             status=$?
@@ -71,16 +60,14 @@ jobs:
           fi
 
       - name: Dispatch CI workflows when push fan-out is unavailable
-        if: ${{ always() && steps.sync.outcome == 'success' && env.HAS_FORK_SYNC_TOKEN != 'true' && (steps.sync.outputs.main_changed == 'true' || steps.sync.outputs.patch_changed == 'true') }}
+        if: ${{ always() && steps.sync.outcome == 'success' && env.HAS_FORK_SYNC_TOKEN != 'true' && steps.sync.outputs.patch_changed == 'true' }}
         uses: actions/github-script@v8
         env:
-          MAIN_CHANGED: ${{ steps.sync.outputs.main_changed }}
           PATCH_CHANGED: ${{ steps.sync.outputs.patch_changed }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
-            const refs = [];
             const workflows = [
               "ci.yml",
               "cargo-deny.yml",
@@ -88,35 +75,22 @@ jobs:
               "rust-ci.yml",
               "bazel.yml",
               "sdk.yml",
+              "shell-tool-mcp-ci.yml",
             ];
 
-            if (process.env.MAIN_CHANGED === "true") {
-              refs.push(process.env.MIRROR_BRANCH);
-            }
-            if (process.env.PATCH_CHANGED === "true") {
-              refs.push(process.env.PATCH_BRANCH);
+            if (process.env.PATCH_CHANGED !== "true") {
+              core.info("Patch branch did not change; skipping CI dispatch.");
+              return;
             }
 
-            for (const ref of refs) {
-              for (const workflow_id of workflows) {
-                await github.rest.actions.createWorkflowDispatch({
-                  owner,
-                  repo,
-                  workflow_id,
-                  ref,
-                });
-                core.info(`Dispatched ${workflow_id} on ${ref}`);
-              }
-            }
-
-            if (process.env.PATCH_CHANGED === "true") {
+            for (const workflow_id of workflows) {
               await github.rest.actions.createWorkflowDispatch({
                 owner,
                 repo,
-                workflow_id: "build-artifacts.yml",
+                workflow_id,
                 ref: process.env.PATCH_BRANCH,
               });
-              core.info(`Dispatched build-artifacts.yml on ${process.env.PATCH_BRANCH}`);
+              core.info(`Dispatched ${workflow_id} on ${process.env.PATCH_BRANCH}`);
             }
 
       - name: Open or update failure issue
