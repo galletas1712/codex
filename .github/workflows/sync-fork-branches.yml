@@ -5,7 +5,7 @@ on:
     branches: [dev]
   workflow_dispatch:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
 
 concurrency:
   group: ${{ github.workflow }}
@@ -22,10 +22,72 @@ env:
   MIRROR_BRANCH: main
   PATCH_BRANCH: dev
   HAS_FORK_SYNC_TOKEN: ${{ secrets.FORK_SYNC_TOKEN != '' && 'true' || 'false' }}
-  SYNC_FAILURE_PR_TITLE: Sync main into dev
+  SYNC_FAILURE_PR_TITLE: Merge main into dev
 
 jobs:
+  decide:
+    name: Decide Whether To Sync
+    runs-on: ubuntu-latest
+    outputs:
+      should_sync: ${{ steps.decide.outputs.should_sync }}
+      reason: ${{ steps.decide.outputs.reason }}
+      upstream_sha: ${{ steps.decide.outputs.upstream_sha }}
+      mirror_sha: ${{ steps.decide.outputs.mirror_sha }}
+    steps:
+      - name: Check sync trigger
+        id: decide
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" != "schedule" ]]; then
+            echo "should_sync=true" >> "$GITHUB_OUTPUT"
+            echo "reason=${GITHUB_EVENT_NAME}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          upstream_sha="$(
+            git ls-remote "https://github.com/${UPSTREAM_REPO}.git" "refs/heads/${UPSTREAM_BRANCH}" \
+              | awk 'NR == 1 { print $1 }'
+          )"
+          mirror_sha="$(
+            git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${MIRROR_BRANCH}" \
+              | awk 'NR == 1 { print $1 }'
+          )"
+
+          if [[ -z "${upstream_sha}" || -z "${mirror_sha}" ]]; then
+            echo "failed to resolve upstream or mirror branch head" >&2
+            exit 1
+          fi
+
+          echo "upstream_sha=${upstream_sha}" >> "$GITHUB_OUTPUT"
+          echo "mirror_sha=${mirror_sha}" >> "$GITHUB_OUTPUT"
+
+          if [[ "${upstream_sha}" == "${mirror_sha}" ]]; then
+            echo "should_sync=false" >> "$GITHUB_OUTPUT"
+            echo "reason=no-upstream-change" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "should_sync=true" >> "$GITHUB_OUTPUT"
+          echo "reason=upstream-advanced" >> "$GITHUB_OUTPUT"
+
+      - name: Skip scheduled sync when upstream has not changed
+        if: ${{ steps.decide.outputs.should_sync != 'true' }}
+        shell: bash
+        run: |
+          echo "Skipping sync: ${REASON}"
+          echo "Upstream ${UPSTREAM_REPO}/${UPSTREAM_BRANCH}: ${UPSTREAM_SHA:-unknown}"
+          echo "Mirror ${GITHUB_REPOSITORY}/${MIRROR_BRANCH}: ${MIRROR_SHA:-unknown}"
+        env:
+          REASON: ${{ steps.decide.outputs.reason }}
+          UPSTREAM_SHA: ${{ steps.decide.outputs.upstream_sha }}
+          MIRROR_SHA: ${{ steps.decide.outputs.mirror_sha }}
+
   sync:
+    name: Sync Fork Branches
+    needs: decide
+    if: ${{ needs.decide.outputs.should_sync == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
