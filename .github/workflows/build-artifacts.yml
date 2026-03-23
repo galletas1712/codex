@@ -21,6 +21,8 @@ jobs:
     name: Build Linux tip
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      AWS_LC_SYS_NO_JITTER_ENTROPY: "1"
     defaults:
       run:
         working-directory: codex-rs
