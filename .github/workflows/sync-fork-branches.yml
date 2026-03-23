@@ -1,15 +1,18 @@
 name: Fork Sync
 
 on:
+  push:
+    branches: [dev]
   workflow_dispatch:
   schedule:
-    - cron: "17 10 * * *"
+    - cron: "*/15 * * * *"
 
 concurrency:
   group: ${{ github.workflow }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -124,7 +127,7 @@ jobs:
             }
 
             const body = [
-              "The scheduled fork sync workflow failed and needs a manual merge.",
+              "The fork sync workflow failed and needs a manual merge.",
               "",
               `- Upstream: \`${process.env.UPSTREAM_REPO}\` / \`${process.env.UPSTREAM_BRANCH}\``,
               `- Mirror branch: \`${process.env.MIRROR_BRANCH}\``,
