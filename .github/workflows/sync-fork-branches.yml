@@ -32,7 +32,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          ref: main
+          ref: ${{ env.PATCH_BRANCH }}
           fetch-depth: 0
           token: ${{ secrets.FORK_SYNC_TOKEN != '' && secrets.FORK_SYNC_TOKEN || github.token }}
 
