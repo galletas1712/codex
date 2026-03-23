@@ -54,24 +54,24 @@ else
     echo "${mirror_branch} already matches ${upstream_ref}"
 fi
 
-echo "Rebasing ${patch_branch} onto ${mirror_branch}"
+echo "Merging ${mirror_branch} into ${patch_branch}"
 echo "  origin/${patch_branch}: ${origin_patch_sha}"
 
 git checkout -B "${patch_branch}" "${origin_patch_ref}"
-if ! git rebase "${mirror_branch}"; then
+if ! git merge --no-edit "${mirror_branch}"; then
     conflicted_files="$(git diff --name-only --diff-filter=U || true)"
-    git rebase --abort || true
-    echo "::error::Failed to rebase ${patch_branch} onto ${mirror_branch}" >&2
+    git merge --abort || true
+    echo "::error::Failed to merge ${mirror_branch} into ${patch_branch}" >&2
     if [[ -n "${conflicted_files}" ]]; then
         printf 'Conflicted files:\n%s\n' "${conflicted_files}" >&2
     fi
     exit 1
 fi
 
-rebased_patch_sha="$(git rev-parse HEAD)"
-echo "  rebased ${patch_branch}: ${rebased_patch_sha}"
+merged_patch_sha="$(git rev-parse HEAD)"
+echo "  merged ${patch_branch}: ${merged_patch_sha}"
 
-if [[ "${rebased_patch_sha}" == "${origin_patch_sha}" ]]; then
+if [[ "${merged_patch_sha}" == "${origin_patch_sha}" ]]; then
     echo "${patch_branch} is already up to date"
     exit 0
 fi
@@ -82,7 +82,7 @@ if [[ -n "${patch_branch_test_command}" ]]; then
 fi
 
 if [[ "${dry_run}" == "1" ]]; then
-    echo "[dry-run] git push --force-with-lease=refs/heads/${patch_branch}:${origin_patch_sha} origin ${patch_branch}"
+    echo "[dry-run] git push origin ${patch_branch}"
 else
-    git push --force-with-lease="refs/heads/${patch_branch}:${origin_patch_sha}" origin "${patch_branch}"
+    git push origin "${patch_branch}"
 fi
