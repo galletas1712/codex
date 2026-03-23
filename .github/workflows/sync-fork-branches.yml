@@ -11,7 +11,7 @@ concurrency:
 
 permissions:
   contents: write
-  issues: write
+  pull-requests: write
 
 env:
   UPSTREAM_REPO: openai/codex
@@ -19,7 +19,7 @@ env:
   MIRROR_BRANCH: main
   PATCH_BRANCH: dev
   HAS_FORK_SYNC_TOKEN: ${{ secrets.FORK_SYNC_TOKEN != '' && 'true' || 'false' }}
-  SYNC_FAILURE_ISSUE_TITLE: Fork branch sync failed
+  SYNC_FAILURE_PR_TITLE: Sync main into dev
 
 jobs:
   sync:
@@ -94,10 +94,13 @@ jobs:
               core.info(`Dispatched ${workflow_id} on ${process.env.PATCH_BRANCH}`);
             }
 
-      - name: Open or update failure issue
+      - name: Open or update failure PR
         if: ${{ always() && steps.sync.outcome != 'success' }}
         uses: actions/github-script@v8
         env:
+          SYNC_FAILURE_PR_TITLE: ${{ env.SYNC_FAILURE_PR_TITLE }}
+          MIRROR_BRANCH: ${{ env.MIRROR_BRANCH }}
+          PATCH_BRANCH: ${{ env.PATCH_BRANCH }}
           SYNC_LOG_FILE: ${{ steps.sync.outputs.log_file }}
           SYNC_EXIT_CODE: ${{ steps.sync.outputs.exit_code }}
         with:
@@ -105,11 +108,14 @@ jobs:
           script: |
             const fs = require("fs");
             const { owner, repo } = context.repo;
-            const title = process.env.SYNC_FAILURE_ISSUE_TITLE;
+            const title = process.env.SYNC_FAILURE_PR_TITLE;
             const logPath = process.env.SYNC_LOG_FILE;
             const exitCode = process.env.SYNC_EXIT_CODE || "unknown";
             const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
             const timestamp = new Date().toISOString();
+            const head = process.env.MIRROR_BRANCH;
+            const base = process.env.PATCH_BRANCH;
+            const headRef = `${owner}:${head}`;
 
             let logExcerpt = "Log file was not captured.";
             if (logPath && fs.existsSync(logPath)) {
@@ -118,7 +124,7 @@ jobs:
             }
 
             const body = [
-              "The scheduled fork sync workflow failed.",
+              "The scheduled fork sync workflow failed and needs a manual merge.",
               "",
               `- Upstream: \`${process.env.UPSTREAM_REPO}\` / \`${process.env.UPSTREAM_BRANCH}\``,
               `- Mirror branch: \`${process.env.MIRROR_BRANCH}\``,
@@ -127,82 +133,104 @@ jobs:
               `- Workflow run: ${runUrl}`,
               `- Updated at: ${timestamp}`,
               "",
+              "This PR is managed by the fork sync workflow and will be updated or closed automatically.",
+              "",
               "Recent log excerpt:",
               "```text",
               logExcerpt,
               "```",
             ].join("\n");
 
-            const issues = await github.paginate(github.rest.issues.listForRepo, {
+            const compare = await github.rest.repos.compareCommitsWithBasehead({
+              owner,
+              repo,
+              basehead: `${base}...${head}`,
+            });
+
+            const pulls = await github.paginate(github.rest.pulls.list, {
               owner,
               repo,
               state: "open",
+              base,
+              head: headRef,
               per_page: 100,
             });
 
-            const existingIssue = issues.find(
-              (issue) => issue.title === title && !issue.pull_request,
-            );
+            const existingPull = pulls.find((pull) => pull.title === title) ?? pulls[0];
 
-            if (existingIssue) {
-              await github.rest.issues.update({
+            if (existingPull) {
+              await github.rest.pulls.update({
                 owner,
                 repo,
-                issue_number: existingIssue.number,
-                body,
-              });
-              core.info(`Updated issue #${existingIssue.number}`);
-            } else {
-              const created = await github.rest.issues.create({
-                owner,
-                repo,
+                pull_number: existingPull.number,
                 title,
                 body,
               });
-              core.info(`Created issue #${created.data.number}`);
+              core.info(`Updated PR #${existingPull.number}`);
+              return;
             }
 
-      - name: Close failure issue after recovery
+            if (compare.data.ahead_by === 0) {
+              core.warning(`Unable to open ${head} -> ${base} PR because there are no commits to compare.`);
+              return;
+            }
+
+            try {
+              const created = await github.rest.pulls.create({
+                owner,
+                repo,
+                title,
+                head,
+                base,
+                body,
+                draft: true,
+              });
+              core.info(`Created PR #${created.data.number}`);
+            } catch (error) {
+              core.setFailed(`Failed to create sync failure PR: ${error.message}`);
+            }
+
+      - name: Close failure PR after recovery
         if: ${{ always() && steps.sync.outcome == 'success' }}
         uses: actions/github-script@v8
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
-            const title = process.env.SYNC_FAILURE_ISSUE_TITLE;
+            const title = process.env.SYNC_FAILURE_PR_TITLE;
+            const head = process.env.MIRROR_BRANCH;
+            const base = process.env.PATCH_BRANCH;
+            const headRef = `${owner}:${head}`;
             const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
 
-            const issues = await github.paginate(github.rest.issues.listForRepo, {
+            const pulls = await github.paginate(github.rest.pulls.list, {
               owner,
               repo,
               state: "open",
+              base,
+              head: headRef,
               per_page: 100,
             });
 
-            const existingIssue = issues.find(
-              (issue) => issue.title === title && !issue.pull_request,
-            );
+            const existingPull = pulls.find((pull) => pull.title === title) ?? pulls[0];
 
-            if (!existingIssue) {
-              core.info("No open sync failure issue to close.");
+            if (!existingPull) {
+              core.info("No open sync failure PR to close.");
               return;
             }
 
-            await github.rest.issues.createComment({
+            await github.rest.pulls.update({
               owner,
               repo,
-              issue_number: existingIssue.number,
-              body: `Fork sync recovered successfully in ${runUrl}. Closing this issue.`,
-            });
-
-            await github.rest.issues.update({
-              owner,
-              repo,
-              issue_number: existingIssue.number,
+              pull_number: existingPull.number,
               state: "closed",
             });
 
-            core.info(`Closed issue #${existingIssue.number}`);
+            core.info(`Closed PR #${existingPull.number}`);
+        env:
+          SYNC_FAILURE_PR_TITLE: ${{ env.SYNC_FAILURE_PR_TITLE }}
+          MIRROR_BRANCH: ${{ env.MIRROR_BRANCH }}
+          PATCH_BRANCH: ${{ env.PATCH_BRANCH }}
 
       - name: Fail workflow if sync failed
         if: ${{ always() && steps.sync.outcome != 'success' }}
